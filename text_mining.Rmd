@@ -1,0 +1,576 @@
+---
+title: "Text mining"
+author: "lina"
+date: "2020/5/8"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r,warning=FALSE}
+#避免字符串自动转化为因子类型
+setwd("E:/Rdata/text_mining-master/")
+options(stringsAsFactors = FALSE)
+library(stringr)
+library(stringi)
+library(qdap)
+```
+
+```{r,warning=FALSE}
+setwd("E:/Rdata/text_mining-master/")
+text.df<-read.csv('oct_delta.csv')
+attach(text.df)
+head(text)
+```
+
+### nchar
+```{r}
+nchar(c("abc","cd","hello world"))
+
+#1.推文的平均字数
+mean(nchar(text,type="bytes"))
+
+#2.仅保留非空文档
+subset.doc<-subset(text,nchar(text,type ="bytes")>0)
+```
+
+### sub
+```{r,warning=TRUE}
+#1.将thanks全部替换成thank you
+sub('thanks','thank you',text,ignore.case = TRUE)[1]
+
+#2.将1-3行中的pls替换为please
+text[1:3]
+sub('pls','please',text[1:3],ignore.case = F)
+```
+
+ignore.case是否区分大小写
+
+### gsub
+```{r}
+#gsub可以多次匹配替换
+fake.text<-'R text mining is good but text mining in Python is also'
+gsub('text mining','tm',fake.text,ignore.case = F)
+sub('text mining','tm',fake.text,ignore.case = F)
+
+#gsub可以用于去掉特殊字符
+text[5]
+gsub('&amp','',text[5])
+
+text[1:3]
+gsub('[[:punct:]]','',text[1:3])
+```
+
+特殊字符：'[[:punct:]]'
+
+### mgsub
+```{r,warning=FALSE}
+library(qdap)
+patterns<-c('good','also','text mining')
+replacements<-c('great','just as suitable','tm')
+fake.text
+mgsub(patterns,replacements,fake.text)
+
+```
+
+注意：小心使用gsub！
+如将RT转化为空格，删除转推，可能会导致airport变成airpo。
+
+
+### paste
+```{r}
+attach(text.df)
+text.df$combined<-paste(month,date,year,sep='-')
+head(text.df$combined)
+```
+
+```{r,warning=FALSE}
+library(lubridate)
+text.df$combined<-mdy(text.df$combined)
+class(text.df$combined)
+```
+
+### strsplit
+```{r}
+agents<-strsplit(text,'[*]')
+agents[1:3]
+```
+
+### substring
+```{r}
+substring('R text mining is great',18,22)
+```
+
+### last.chars
+```{r}
+#获取最后长度weinum的字符串
+last.chars<-function(text,num){
+  len=nchar(text,type="bytes")
+  last<-substring(text,len-num+1,len)
+                                                   
+  return(last)
+}
+last.chars('R text mining is good',4)
+last.chars(text[1:2],2)
+```
+
+```{r}
+#查看工作日各个代理的推文数量
+library(lubridate)
+weekdays<-subset(text.df,
+                 text.df$combined>=mdy('10-05-2015')&
+                  text.df$combined<=mdy('10-09-2015'))
+agents<-last.chars(weekdays$text,2)
+table(agents)
+```
+
+
+### grep
+类似于unix系统的grep函数
+```{r}
+#检索所有出现sorry的位置
+grep("sorry",text[1:80],ignore.case = T)
+grepl("sorry",text[1:80],ignore.case = T)  #布尔值
+
+#检索多个词汇，或
+grep(c("sorry|apologize"),text[1:80],ignore.case = T)
+```
+
+```{r}
+sum(grepl('[0-9]{3}|[0-9]{4}',text))/length(text)
+sum(grepl('http',text,ignore.case = T))/length(text)
+```
+
+
+
+### stringi
+```{r}
+library(stringi)
+#快速判断是否存在http，返回0-1值
+sum(stri_count(text,fixed = "http"))
+```
+
+### stringr
+```{r}
+library(stringr)
+sum(str_detect(text,'http'))  #返回布尔值
+```
+
+
+```{r}
+patterns<-with(text.df,str_detect(text,'http')&
+                 str_detect(text,'[0-9]{3}-'))
+text[patterns]
+```
+
+
+## 文本预处理
+
+```{r,warning=FALSE}
+library(tm)
+tweets<-data.frame(ID=seq(1:nrow(text.df)),text=text.df$text)
+
+#文本预处理
+#1.转化为小写
+tryTolower<-function(x){
+  y=NA
+  #异常处理
+  try_error=tryCatch(tolower(x),
+                     error=function(e)e)
+  if(!inherits(try_error,'error'))
+    y=tolower(x)
+  return(y)
+}
+
+#2.定义停用词
+custom.stopwords<-c(
+  stopwords('english'),'lol','smh','delta'
+)
+```
+
+```{r,warning=FALSE}
+#3.整理语料
+clean.corpus<-function(corpus){
+  corpus<-tm_map(corpus,content_transformer(tryTolower)) #转化为小写
+  corpus<-tm_map(corpus,removeWords,custom.stopwords)
+  #去停用词
+  corpus<-tm_map(corpus,removePunctuation)
+  corpus<-tm_map(corpus,stripWhitespace) #去掉多余的空格
+  corpus<-tm_map(corpus,removeNumbers) #去掉数值
+  return(corpus)
+}
+```
+
+
+```{r}
+#4.生成语料库
+require(devtools)
+#install_version("tm",version="0.7-1")  #注意tm包的版本
+library(tm)
+
+colnames(tweets) <- c("doc_id", "text") 
+corpus<-VCorpus(DataframeSource(tweets))  
+#VCorpus是存储在内存中的而PCorpus则创建永久语料库
+
+corpus<-clean.corpus(corpus)
+as.list(corpus)[1]  #查看第一条推文
+as.character(corpus[[1]])  
+```
+
+
+```{r}
+#拼写检查
+library(tm)
+library(qdap)
+tm.definition<-'Txt mining is the process of distilling actionable insyghts from text.'
+which_misspelled(tm.definition)
+
+#交互式改错
+#check_spelling_interactive(tm.definition)
+```
+
+```{r}
+fit.text<-function(myStr){
+  check<-check_spelling(myStr)
+  #将字符串按空格切分，生成列表
+  splitted<-strsplit(myStr,split=" ")
+  for(i in  1:length(check$row)){
+    splitted[[check$row[i]]][as.numeric(check$word.no[i])]=
+      check$suggestion[i]
+  }
+  #将切分词后的列表转化为字符串
+  df<-unlist(lapply(splitted,function(x) paste(x,collapse = ' ')))
+  return(df)
+}
+
+fit.text(tm.definition)
+```
+
+
+## 词频统计
+```{r}
+#TDM
+tdm<-TermDocumentMatrix(corpus,control=list(weighting=weightTf))
+class(tdm)
+tdm.tweets.m<-as.matrix(tdm)
+tdm.tweets.m[2250:2255,1340:1342]
+
+term.freq=rowSums(tdm.tweets.m) #每个单词的词频
+freq.df<-data.frame(word=names(term.freq),
+                    frequency=term.freq)
+#按词频降序排列
+head(freq.df[order(freq.df[,2],decreasing = T),])
+```
+
+## 词频条形图
+```{r}
+library(ggplot2)
+library(ggthemes)
+freq.df$word<-as.factor(freq.df$word)
+ggplot(freq.df[1:20,],aes(x=word,y=frequency))+
+  geom_bar(stat="identity",fill='darkred')+
+  coord_flip()+ #条形图
+  theme_gdocs()+
+  geom_text(aes(label=frequency),
+            colour="white",hjust=1.25,size=5)
+```
+
+```{r}
+freq.df<-freq.df[order(freq.df$frequency,decreasing =TRUE),]
+levels=unique(as.character(freq.df$word))
+freq.df$word<-factor(freq.df$word,levels=levels,ordered=T)
+
+ggplot(freq.df[1:20,],aes(x=word,y=frequency))+
+  geom_bar(stat="identity",fill='darkred')+
+  coord_flip()+ #条形图
+  theme_gdocs()+
+  geom_text(aes(label=frequency),
+            colour="white",hjust=1.25,size=5)
+
+```
+
+## 关联分析
+```{r}
+#寻找与apologies相关程度超过0.11的单词
+associations<-findAssocs(tdm,'apologies',0.11)
+associations<-as.data.frame(associations)
+associations
+associations$terms<-row.names(associations)
+associations$terms<-factor(associations$terms,levels=associations$terms)
+```
+
+```{r}
+ggplot(associations,aes(y=terms))+
+  geom_point(aes(x=apologies),data=associations,size=5)+
+  theme_gdocs()+
+  geom_text(aes(x=apologies,label=apologies),
+            colour="darkred",hjust=-0.25,size=4)+
+  theme(text=element_text(size=12),
+       axis.title.y=element_blank()) #去掉y轴标题
+```
+
+## 词网络
+```{r}
+library(igraph)
+#查找与退款相关的帖子
+refund<-tweets[grep("refund",text,ignore.case = TRUE),]
+colnames(refund)<-c("doc_id","text")
+refund.corpus<-VCorpus(DataframeSource(refund[1:3,]))
+#清理语料库
+refund.corpus<-clean.corpus(refund.corpus)
+refund.tdm<-TermDocumentMatrix(refund.corpus,
+          control = list(weighting=weightTf))
+
+```
+
+
+```{r}
+refund.m<-as.matrix(refund.tdm)
+#生成邻接矩阵
+refund.adj<-refund.m%*%t(refund.m)
+refund.adj<-graph.adjacency(
+  refund.adj,weighted = TRUE,mode="undirected",diag=T
+)
+refund.adj
+refund.adj<-simplify(refund.adj)
+refund.adj
+```
+
+```{r}
+par(mar=c(0,0,0,0)+0.1,mgp=c(5,1,0))
+plot.igraph(refund.adj,
+            vertex.shape="none",
+            vertex.label.font=2,
+            vertex.label.color="darkred",
+            vertex.label.cex=0.7,
+            edge.color="gray85")
+```
+
+```{r}
+library(qdap)
+word_network_plot(refund$text[1:3])
+```
+
+
+```{r}
+Sys.setlocale(category = "LC_ALL", locale = "C")
+word_associate(tweets$text,match.string = c('refund'),
+              stopwords = Top200Words,
+               network.plot = T,
+               cloud.colors = c("gray85","darkred")
+               )
+
+```
+
+## 文本聚类
+### 树状图
+```{r}
+#压缩文档词频矩阵，去掉大量0的词项
+tdm2<-removeSparseTerms(tdm,sparse = 0.975)
+
+#计算距离矩阵
+hc<-hclust(dist(tdm2,method = "euclidean"),method="complete")
+plot(hc)
+```
+
+```{r}
+#调整叶子节点，使同一个簇的叶子节点颜色相同，叶子节点处于同一个高度
+dend.change<-function(n){
+  if(is.leaf(n)){
+    a<-attributes(n)  #dendrogram的属性
+    labCol<-labelColors[clusMember[which(names(clusMember)==a$label)]]
+    attr(n,"nodePar")<-c(a$nodePar,lab.col=labCol)
+  }
+  n
+}
+hcd<-as.dendrogram(hc)
+clusMember<-cutree(hc,4)
+labelColors<-c("darkgray","darkred",'black','#bada55')
+#将函数dend.change运用到树状图的每个节点
+clusDendro<-dendrapply(hcd,dend.change)
+plot(clusDendro)
+
+```
+
+```{r}
+library(dendextend)
+library(circlize)
+hcd<-color_labels(hcd,4,col=c("#bada55","darkgrey","black","darkred"))
+hcd<-color_branches(hcd,labels_track_height=0.5,dend_track_height=0.4)
+circlize_dendrogram(hcd,labels_track_height=0.5,dend_track_height=0.4)
+```
+
+
+## 词云
+```{r}
+library(wordcloud)
+head(freq.df)
+wordcloud(freq.df$word,freq.df$frequency,max.words = 100,
+          colors=c("black","darkred"))
+```
+
+```{r}
+setwd("E:/Rdata/text_mining-master/")
+library(tm)
+library(wordcloud)
+custom.stopwords<-c(stopwords("en"),"soory","amp","delta","amazon")
+clean.vec<-function(text.vec){
+  text.vec<-tryTolower(text.vec)
+  text.vec<-removeWords(text.vec,custom.stopwords)
+  text.vec<-removePunctuation(text.vec)
+  text.vec<-stripWhitespace(text.vec)
+  text.vec<-removeNumbers(text.vec)
+  return(text.vec)
+}
+amzn<-read.csv('amzn_cs.csv')
+delta<-read.csv('oct_delta.csv')
+
+#清理语料
+amzn.vec<-clean.vec(amzn$text)
+delta.vec<-clean.vec(delta$text)
+head(amzn.vec)
+head(delta.vec)
+
+amzn.vec<-paste(amzn.vec,collapse = " ") #句末加空格
+delta.vec<-paste(delta.vec,collapse = " ")
+
+#两个语料合并
+all<-c(amzn.vec,delta.vec)
+corpus<-VCorpus(VectorSource(all))
+```
+
+```{r}
+#转化为词项文档矩阵
+tdm<-TermDocumentMatrix(corpus)
+tdm.m<-as.matrix(tdm)
+colnames(tdm.m)<-c("Amazon","delta")
+tdm.m[3480:3490,]
+```
+
+```{r}
+library(RColorBrewer)
+#渐进色的调色板
+display.brewer.all(type="seq")
+```
+
+
+```{r}
+#合并词云
+pal<-brewer.pal(8,"PuRd")[5:8]  #选择4种紫红色
+commonality.cloud(tdm.m,max.words = 200
+                  ,random.order=FALSE,colors=pal) #random.order参数控制词频高的词位于中间，而非随即设置
+```
+
+
+```{r,warning=FALSE}
+comparison.cloud(tdm.m,max.words = 200,
+                 random.order = FALSE,
+                 title.size = 0.8,
+                 colors=brewer.pal(ncol(tdm.m),"Dark2"))
+```
+
+### 金字塔图
+```{r}
+library(plotrix)
+common.words<-subset(tdm.m,tdm.m[,1]>0&tdm.m[,2]>0)
+dim(common.words)  #公共词 579词
+dim(tdm.m)  #原始语料库 4050词
+
+#Amazon和delta语料词频差异
+difference<-abs(common.words[,1]-common.words[,2])
+common.words<-cbind(common.words,difference)
+common.words<-common.words[order(common.words[,3],decreasing = TRUE),]
+head(common.words)
+
+top25.df=data.frame(x=common.words[1:25,1],
+                    y=common.words[1:25,2],
+                    labels=rownames(common.words)[1:25])
+pyramid.plot(top25.df$x,top25.df$y,labels = top25.df$labels,
+             top.labels = c("Amazon","Words","delta"),
+             main="Words in common",
+             gap=40,     #对比中间的距离
+             labelcex = 0.8,  #坐标字体大小
+             laxlab = NULL,
+             raxlab = NULL,
+             unit=NULL)
+```
+
+
+## 情感分析
+```{r}
+library(qdap)
+#查看qdap包中的极性词
+head(key.pol)
+new.pos<-c('lol','rofl')
+old.pos<-key.pol[key.pol$y==1,]
+all.pos<-unlist(c(new.pos,old.pos[,1]))
+
+new.neg<-c('kappa','meh')
+old.neg<-key.pol[key.pol$y==-1,]
+all.neg<-unlist(c(new.neg,old.neg[,1]))
+
+#情绪框架
+all.polarity<-sentiment_frame(all.pos,all.neg,1,-1)
+
+#示例
+polarity("ROFL, look at that!",polarity.frame = all.polarity)
+
+#如果不指定极性词字典，则无法识别ROFL为正面词汇
+polarity("ROFL, look at that!")
+```
+
+```{r,warning=FALSE}
+#Airbnb关于波士顿公寓或房子的评论
+options(stringsAsFactors = FALSE)
+Sys.setlocale(category = "LC_ALL", locale = "C")
+library(tm)
+library(qdap)
+library(wordcloud)
+library(ggplot2)
+library(ggthemes)
+
+setwd("E:/Rdata/text_mining-master/")
+bos.airbnb<-read.csv('bos_airbnb_1k.csv')
+bos.pol<-polarity(as.character(bos.airbnb$comments))
+```
+
+
+```{r}
+ggplot(bos.pol$all,aes(x=polarity,y=..density..))+
+  theme_gdocs()+
+  geom_histogram(binwidth=0.25,
+                 fill="darkred",
+                 colour="grey60",
+                 size=0.2)+
+  geom_density(size=0.75)
+```
+
+
+## 极性词云
+```{r,warning=FALSE}
+bos.airbnb$polarity<-scale(bos.pol$all$polarity)
+pos.comments<-subset(bos.airbnb$comments,bos.airbnb$polarity>0)
+neg.comments<-subset(bos.airbnb$comments,bos.airbnb$polarity<0)
+pos.terms<-paste(pos.comments,collapse = " ")
+neg.terms<-paste(neg.comments,collapse = " ")
+all.corpus<-VCorpus(VectorSource(c(pos.terms,neg.terms)))
+
+all.tdm<-TermDocumentMatrix(all.corpus,
+                            control=list(weighting=weightTfIdf,
+                                         removePunctuation=TRUE,
+                                         stopwords=stopwords(kind="en")))
+
+all.tdm.m<-as.matrix(all.tdm)
+colnames(all.tdm.m)<-c("positive","negative")
+comparison.cloud(all.tdm.m,max.words = 300,
+                 colors = c("darkgreen","darkred"))
+```
+
+
+
+
+
+
+
+
